@@ -12,45 +12,20 @@ import { Badge } from '@/components/ui/badge'
 import { useProfile } from '@/hooks/useProfile'
 import { useNotebook } from '@/hooks/useNotebook'
 import { useSpeech } from '@/hooks/useSpeech'
-
-interface Highlight {
-  word: string
-  phonetic: string
-  meaning: string
-  partOfSpeech: string
-}
-
-interface Question {
-  question: string
-  options: string[]
-  answer: string
-  explanation: string
-}
-
-interface ReadingResult {
-  title: string
-  passage: string
-  highlights: Highlight[]
-  questions: Question[]
-  summary: string
-}
+import { useStreamObject } from '@/hooks/useStreamObject'
+import type { ReadingHighlight, ReadingResult } from '@/lib/ai/schemas'
 
 const QUICK_TOPICS = [
   '气候变化', '人工智能', '太空探索', '健康饮食',
   '城市生活', '传统文化', '体育精神', '科学发现',
 ]
 
-// Build a map of word → highlight info (lowercase key for matching)
-function buildHighlightMap(highlights: Highlight[]): Map<string, Highlight> {
-  const map = new Map<string, Highlight>()
-  for (const h of highlights) {
-    map.set(h.word.toLowerCase(), h)
-  }
+function buildHighlightMap(highlights: ReadingHighlight[]): Map<string, ReadingHighlight> {
+  const map = new Map<string, ReadingHighlight>()
+  for (const h of highlights) map.set(h.word.toLowerCase(), h)
   return map
 }
 
-// Split passage into tokens, preserving whitespace and punctuation
-// so we can highlight specific words inline
 function tokenizePassage(text: string): string[] {
   return text.split(/(\s+|[.,!?;:'"()\[\]—–-]+)/).filter(Boolean)
 }
@@ -61,66 +36,49 @@ export default function ReadingPage() {
   const { speak, speaking } = useSpeech()
 
   const [topic, setTopic] = useState('')
-  const [loading, setLoading] = useState(false)
-  const [result, setResult] = useState<ReadingResult | null>(null)
-  const [activeWord, setActiveWord] = useState<Highlight | null>(null)
+  const [activeWord, setActiveWord] = useState<ReadingHighlight | null>(null)
   const [answers, setAnswers] = useState<Record<number, string>>({})
   const [submitted, setSubmitted] = useState(false)
   const [savedWords, setSavedWords] = useState<Set<string>>(new Set())
 
-  const generate = async (t?: string) => {
+  const { submit, object: result, isLoading: loading } = useStreamObject<ReadingResult>({
+    api: '/api/ai/reading',
+    onError: (e) => toast.error(e.message),
+  })
+
+  const generate = (t?: string) => {
     const finalTopic = t ?? topic
     if (!finalTopic.trim()) return toast.error('请输入阅读主题')
     if (!loaded) return
     if (!activeKey) return toast.error('请先在设置中配置 API Key')
 
-    setLoading(true)
-    setResult(null)
     setAnswers({})
     setSubmitted(false)
     setActiveWord(null)
     setSavedWords(new Set())
 
-    try {
-      const res = await fetch('/api/ai/reading', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          topic: finalTopic,
-          provider: profile.preferredProvider,
-          apiKey: activeKey,
-          profile,
-        }),
-      })
-      if (!res.ok) {
-        const err = await res.json()
-        throw new Error(err.error ?? 'API 请求失败')
-      }
-      const data: ReadingResult = await res.json()
-      setResult(data)
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : '生成失败，请重试')
-    } finally {
-      setLoading(false)
-    }
+    submit({
+      topic: finalTopic,
+      provider: profile.preferredProvider,
+      apiKey: activeKey,
+      profile,
+    })
   }
 
-  const saveHighlight = async (h: Highlight) => {
+  const saveHighlight = async (h: ReadingHighlight) => {
     await addWord({ word: h.word, phonetic: h.phonetic, meaning: h.meaning })
     setSavedWords((prev) => new Set(prev).add(h.word.toLowerCase()))
     toast.success(`"${h.word}" 已加入生词本`)
   }
 
+  const questions = result?.questions ?? []
+  const highlights = result?.highlights ?? []
   const score = (() => {
     if (!result || !submitted) return null
-    let correct = 0
-    result.questions.forEach((q, i) => {
-      if (answers[i] === q.answer) correct++
-    })
-    return correct
+    return questions.filter((q, i) => answers[i] === q.answer).length
   })()
 
-  const highlightMap = result ? buildHighlightMap(result.highlights) : new Map()
+  const highlightMap = buildHighlightMap(highlights)
 
   return (
     <AppShell title="阅读理解">
@@ -161,39 +119,27 @@ export default function ReadingPage() {
           </CardContent>
         </Card>
 
-        {/* Loading */}
-        {loading && (
+        {/* Loading — hides as soon as passage starts streaming */}
+        {loading && !result?.passage && (
           <div className="flex items-center justify-center py-12 text-muted-foreground">
-            <motion.div
-              animate={{ rotate: 360 }}
-              transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
-              className="mr-3"
-            >
+            <motion.div animate={{ rotate: 360 }} transition={{ duration: 1, repeat: Infinity, ease: 'linear' }} className="mr-3">
               <Sparkles size={20} />
             </motion.div>
             AI 正在生成文章和题目...
           </div>
         )}
 
+        {/* Passage — appears as soon as text starts streaming */}
         <AnimatePresence>
-          {result && (
-            <motion.div
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="space-y-5"
-            >
-              {/* Passage */}
+          {result?.passage && (
+            <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-5">
               <Card>
                 <CardHeader className="pb-2">
                   <div className="flex items-start justify-between gap-2">
-                    <CardTitle className="text-lg leading-snug">{result.title}</CardTitle>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      disabled={speaking}
-                      onClick={() => speak(result.passage)}
-                      className="shrink-0"
-                    >
+                    <CardTitle className="text-lg leading-snug">
+                      {result.title ?? <span className="opacity-40">...</span>}
+                    </CardTitle>
+                    <Button variant="ghost" size="sm" disabled={speaking} onClick={() => speak(result.passage!)} className="shrink-0">
                       <Volume2 size={14} className="mr-1.5" />
                       朗读
                     </Button>
@@ -223,42 +169,37 @@ export default function ReadingPage() {
                   <AnimatePresence>
                     {activeWord && (
                       <motion.div
-                        initial={{ opacity: 0, y: 4 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        exit={{ opacity: 0, y: 4 }}
-                        className="mt-4 p-3 rounded-xl border border-primary/20 bg-primary/5 flex items-start justify-between gap-3"
+                        initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 4 }}
+                        className="mt-4 p-3 rounded-xl border border-primary/20 bg-primary/5 space-y-2"
                       >
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className="font-bold">{activeWord.word}</span>
-                            <span className="text-muted-foreground text-xs font-mono">{activeWord.phonetic}</span>
-                            <Badge variant="outline" className="text-xs">{activeWord.partOfSpeech}</Badge>
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="font-bold">{activeWord.word}</span>
+                              <span className="text-muted-foreground text-xs font-mono">{activeWord.phonetic}</span>
+                              <Badge variant="outline" className="text-xs">{activeWord.partOfSpeech}</Badge>
+                            </div>
+                            <p className="text-sm mt-0.5">{activeWord.meaning}</p>
                           </div>
-                          <p className="text-sm mt-0.5">{activeWord.meaning}</p>
+                          <div className="flex items-center gap-1 shrink-0">
+                            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => speak(activeWord.word)} disabled={speaking}>
+                              <Volume2 size={13} />
+                            </Button>
+                            <Button
+                              variant="ghost" size="icon" className="h-7 w-7"
+                              disabled={savedWords.has(activeWord.word.toLowerCase())}
+                              onClick={() => saveHighlight(activeWord)}
+                            >
+                              <BookmarkPlus size={13} className={savedWords.has(activeWord.word.toLowerCase()) ? 'text-blue-500' : ''} />
+                            </Button>
+                          </div>
                         </div>
-                        <div className="flex items-center gap-1 shrink-0">
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-7 w-7"
-                            onClick={() => speak(activeWord.word)}
-                            disabled={speaking}
-                          >
-                            <Volume2 size={13} />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-7 w-7"
-                            disabled={savedWords.has(activeWord.word.toLowerCase())}
-                            onClick={() => saveHighlight(activeWord)}
-                          >
-                            <BookmarkPlus
-                              size={13}
-                              className={savedWords.has(activeWord.word.toLowerCase()) ? 'text-blue-500' : ''}
-                            />
-                          </Button>
-                        </div>
+                        {/* Extra example sentence for this word */}
+                        {activeWord.exampleSentence && (
+                          <p className="text-xs text-muted-foreground italic border-t pt-2">
+                            例：{activeWord.exampleSentence}
+                          </p>
+                        )}
                       </motion.div>
                     )}
                   </AnimatePresence>
@@ -269,139 +210,140 @@ export default function ReadingPage() {
                 </CardContent>
               </Card>
 
-              {/* Vocabulary list */}
-              <Card>
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-base">重点词汇 ({result.highlights.length})</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                    {result.highlights.map((h, i) => (
-                      <div
-                        key={i}
-                        className="flex items-center justify-between p-2.5 rounded-lg border hover:bg-muted/40 transition-colors"
-                      >
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-1.5">
-                            <span className="font-medium text-sm">{h.word}</span>
-                            <span className="text-xs text-muted-foreground font-mono">{h.phonetic}</span>
+              {/* Vocabulary list — appears as highlights stream in */}
+              {highlights.length > 0 && (
+                <Card>
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-base">
+                      重点词汇 ({highlights.length}){loading && <span className="text-muted-foreground text-sm font-normal ml-1">...</span>}
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      {highlights.map((h, i) => (
+                        <div key={i} className="flex items-center justify-between p-2.5 rounded-lg border hover:bg-muted/40 transition-colors">
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-1.5">
+                              <span className="font-medium text-sm">{h.word}</span>
+                              <span className="text-xs text-muted-foreground font-mono">{h.phonetic}</span>
+                            </div>
+                            <p className="text-xs text-muted-foreground truncate">{h.meaning}</p>
+                            {h.exampleSentence && (
+                              <p className="text-xs text-muted-foreground/70 italic truncate mt-0.5">{h.exampleSentence}</p>
+                            )}
                           </div>
-                          <p className="text-xs text-muted-foreground truncate">{h.meaning}</p>
-                        </div>
-                        <div className="flex gap-1">
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-7 w-7"
-                            onClick={() => speak(h.word)}
-                            disabled={speaking}
-                          >
-                            <Volume2 size={12} />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-7 w-7"
-                            disabled={savedWords.has(h.word.toLowerCase())}
-                            onClick={() => saveHighlight(h)}
-                          >
-                            <BookmarkPlus
-                              size={12}
-                              className={savedWords.has(h.word.toLowerCase()) ? 'text-blue-500' : ''}
-                            />
-                          </Button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </CardContent>
-              </Card>
-
-              {/* Questions */}
-              <Card>
-                <CardHeader className="pb-3">
-                  <div className="flex items-center justify-between">
-                    <CardTitle className="text-base">理解测验</CardTitle>
-                    {submitted && score !== null && (
-                      <Badge variant={score >= 3 ? 'default' : 'destructive'}>
-                        {score} / {result.questions.length} 题正确
-                      </Badge>
-                    )}
-                  </div>
-                </CardHeader>
-                <CardContent className="space-y-5">
-                  {result.questions.map((q, qi) => (
-                    <div key={qi} className="space-y-2">
-                      <p className="text-sm font-medium">
-                        {qi + 1}. {q.question}
-                      </p>
-                      <div className="grid grid-cols-1 gap-1.5">
-                        {q.options.map((opt, oi) => {
-                          const letter = opt.charAt(0)
-                          const isSelected = answers[qi] === letter
-                          const isCorrect = submitted && letter === q.answer
-                          const isWrong = submitted && isSelected && letter !== q.answer
-
-                          return (
-                            <button
-                              key={oi}
-                              type="button"
-                              disabled={submitted}
-                              onClick={() => setAnswers((prev) => ({ ...prev, [qi]: letter }))}
-                              className={`text-left px-3 py-2 rounded-lg border text-sm transition-colors ${
-                                isCorrect
-                                  ? 'border-green-500 bg-green-50 dark:bg-green-950/30 text-green-700 dark:text-green-300'
-                                  : isWrong
-                                  ? 'border-red-400 bg-red-50 dark:bg-red-950/30 text-red-700 dark:text-red-300'
-                                  : isSelected
-                                  ? 'border-primary bg-primary/5'
-                                  : 'border-border hover:bg-muted'
-                              }`}
+                          <div className="flex gap-1 ml-2">
+                            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => speak(h.word)} disabled={speaking}>
+                              <Volume2 size={12} />
+                            </Button>
+                            <Button
+                              variant="ghost" size="icon" className="h-7 w-7"
+                              disabled={savedWords.has(h.word.toLowerCase())}
+                              onClick={() => saveHighlight(h)}
                             >
-                              <span className="flex items-center gap-2">
-                                {submitted && isCorrect && <CheckCircle2 size={13} className="text-green-500 shrink-0" />}
-                                {submitted && isWrong && <XCircle size={13} className="text-red-500 shrink-0" />}
-                                {opt}
-                              </span>
-                            </button>
-                          )
-                        })}
-                      </div>
-                      {submitted && (
-                        <p className="text-xs text-muted-foreground pl-1">
-                          {q.explanation}
-                        </p>
+                              <BookmarkPlus size={12} className={savedWords.has(h.word.toLowerCase()) ? 'text-blue-500' : ''} />
+                            </Button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+
+              {/* Questions — appears as they stream in */}
+              {questions.length > 0 && (
+                <Card>
+                  <CardHeader className="pb-3">
+                    <div className="flex items-center justify-between">
+                      <CardTitle className="text-base">
+                        理解测验{loading && <span className="text-muted-foreground text-sm font-normal ml-1">...</span>}
+                      </CardTitle>
+                      {submitted && score !== null && (
+                        <Badge variant={score >= Math.ceil(questions.length / 2) ? 'default' : 'destructive'}>
+                          {score} / {questions.length} 题正确
+                        </Badge>
                       )}
                     </div>
-                  ))}
+                  </CardHeader>
+                  <CardContent className="space-y-5">
+                    {questions.map((q, qi) => (
+                      <div key={qi} className="space-y-2">
+                        <p className="text-sm font-medium">{qi + 1}. {q.question}</p>
+                        <div className="grid grid-cols-1 gap-1.5">
+                          {(q.options ?? []).map((opt, oi) => {
+                            const letter = opt.charAt(0)
+                            const isSelected = answers[qi] === letter
+                            const isCorrect = submitted && letter === q.answer
+                            const isWrong = submitted && isSelected && letter !== q.answer
+                            return (
+                              <button
+                                key={oi}
+                                type="button"
+                                disabled={submitted}
+                                onClick={() => setAnswers((prev) => ({ ...prev, [qi]: letter }))}
+                                className={`text-left px-3 py-2 rounded-lg border text-sm transition-colors ${
+                                  isCorrect ? 'border-green-500 bg-green-50 dark:bg-green-950/30 text-green-700 dark:text-green-300'
+                                  : isWrong ? 'border-red-400 bg-red-50 dark:bg-red-950/30 text-red-700 dark:text-red-300'
+                                  : isSelected ? 'border-primary bg-primary/5'
+                                  : 'border-border hover:bg-muted'
+                                }`}
+                              >
+                                <span className="flex items-center gap-2">
+                                  {submitted && isCorrect && <CheckCircle2 size={13} className="text-green-500 shrink-0" />}
+                                  {submitted && isWrong && <XCircle size={13} className="text-red-500 shrink-0" />}
+                                  {opt}
+                                </span>
+                              </button>
+                            )
+                          })}
+                        </div>
+                        {submitted && <p className="text-xs text-muted-foreground pl-1">{q.explanation}</p>}
+                      </div>
+                    ))}
 
-                  {!submitted ? (
-                    <Button
-                      onClick={() => setSubmitted(true)}
-                      disabled={Object.keys(answers).length < result.questions.length}
-                      className="w-full"
-                    >
-                      提交答案
-                    </Button>
-                  ) : (
-                    <div className="text-center text-sm text-muted-foreground py-1">
-                      {score === result.questions.length
-                        ? '🎉 全部答对，太厉害了！'
-                        : score! >= Math.ceil(result.questions.length / 2)
-                        ? '👍 答对过半，继续加油！'
-                        : '💪 不错的尝试，多读几遍文章再试试！'}
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
+                    {!submitted ? (
+                      <Button
+                        onClick={() => setSubmitted(true)}
+                        disabled={loading || Object.keys(answers).length < questions.length}
+                        className="w-full"
+                      >
+                        提交答案
+                      </Button>
+                    ) : (
+                      <div className="text-center text-sm text-muted-foreground py-1">
+                        {score === questions.length ? '🎉 全部答对，太厉害了！'
+                          : score! >= Math.ceil(questions.length / 2) ? '👍 答对过半，继续加油！'
+                          : '💪 不错的尝试，多读几遍文章再试试！'}
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              )}
+
+              {/* Grammar point — new section */}
+              {result.grammarPoint && (
+                <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+                  <Card className="bg-blue-50/50 dark:bg-blue-950/20 border-blue-200 dark:border-blue-800">
+                    <CardContent className="pt-4 pb-3 text-sm">
+                      <strong className="text-blue-700 dark:text-blue-300">📖 语法要点：</strong>
+                      <span className="text-foreground ml-1">{result.grammarPoint}</span>
+                    </CardContent>
+                  </Card>
+                </motion.div>
+              )}
 
               {/* Summary */}
-              <Card className="bg-muted/30">
-                <CardContent className="pt-4 pb-3 text-sm text-muted-foreground">
-                  <strong className="text-foreground">文章主旨：</strong>
-                  {result.summary}
-                </CardContent>
-              </Card>
+              {result.summary && !loading && (
+                <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+                  <Card className="bg-muted/30">
+                    <CardContent className="pt-4 pb-3 text-sm text-muted-foreground">
+                      <strong className="text-foreground">文章主旨：</strong>
+                      {result.summary}
+                    </CardContent>
+                  </Card>
+                </motion.div>
+              )}
             </motion.div>
           )}
         </AnimatePresence>

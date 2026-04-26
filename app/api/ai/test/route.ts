@@ -24,12 +24,11 @@ function friendlyError(message: string, provider: AIProvider): string {
 }
 
 export async function POST(req: NextRequest) {
+  let provider: AIProvider = AIProvider.OpenAI
   try {
-    const { provider, apiKey, model } = await req.json() as {
-      provider: AIProvider
-      apiKey: string
-      model?: string
-    }
+    const body = await req.json() as { provider: AIProvider; apiKey: string; model?: string }
+    provider = body.provider
+    const { apiKey, model } = body
 
     if (!apiKey?.trim()) {
       return NextResponse.json({ ok: false, error: 'API key 为空' }, { status: 400 })
@@ -41,7 +40,6 @@ export async function POST(req: NextRequest) {
     const { text } = await generateText({
       model: aiModel,
       prompt: 'Reply with exactly the word: OK',
-      maxTokens: 16,
     })
 
     console.log(`[test] success provider=${provider} reply=${text.trim()}`)

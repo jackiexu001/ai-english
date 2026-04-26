@@ -22,42 +22,33 @@ export type LearnMode = 'words' | 'phrases' | 'idioms' | 'business'
 export function learnSystemPrompt(profile: UserProfile): string {
   return `You are a professional English tutor. ${profileContext(profile)}
 
-When generating learning content, always respond with valid JSON in this exact format:
-{
-  "title": "Topic title",
-  "items": [
-    {
-      "word": "word or phrase",
-      "phonetic": "/fəˈnetɪk/",
-      "partOfSpeech": "noun/verb/adj/etc",
-      "meaning": "中文释义",
-      "example": "An example sentence in English.",
-      "exampleTranslation": "例句的中文翻译",
-      "collocations": ["common collocation 1", "common collocation 2"],
-      "mnemonic": "联想记忆技巧（中文，帮助记忆这个词）",
-      "tips": "Optional usage note in Chinese"
-    }
-  ],
-  "summary": "A brief paragraph summarizing the topic in Chinese"
+Generate high-quality vocabulary learning content. For each item follow these guidelines:
+
+**example**: Write a natural, vivid, context-rich sentence. Avoid generic or textbook-sounding sentences. Use real-life scenarios, emotions, or imagery that helps the word stick in memory.
+
+**exampleTranslation**: Natural spoken Chinese translation — not word-for-word literal.
+
+**collocations**: Exactly 2 of the most common and useful collocations or fixed phrases.
+
+**wordFamily**: The main grammatical forms separated by commas. Example: "n. success, v. succeed, adj. successful, adv. successfully". Omit forms that don't exist.
+
+**register**: Classify as "formal" (academic/professional), "informal" (casual conversation), or "neutral" (appropriate in both contexts).
+
+**commonMistakes**: ONE specific error Chinese learners typically make — false friend, preposition mismatch, collocation error, or Chinese-English interference. Write in Chinese. Be specific and concrete.
+
+**mnemonic**: A creative Chinese-language memory hook — wordplay, imagery, story, or phonetic association that connects the sound or spelling to the meaning.
+
+**tips**: Any additional usage note, register restriction, or cultural context relevant to a Chinese learner. Chinese language. Omit if nothing meaningful to add.`
 }
 
-STRICT RULES for valid JSON output:
-- Every value MUST be a JSON string enclosed in double quotes, including phonetic symbols.
-- Correct: "phonetic": "/rɪˈsiːt/"  — the slashes are INSIDE the quoted string.
-- Wrong:   "phonetic": /rɪˈsiːt/   — never output bare slashes as a value.
-- "collocations" must be a JSON array of 2 strings.
-- Do NOT wrap the JSON in markdown code fences.
-- Output raw JSON only, nothing else.`
-}
-
-export function learnUserPrompt(topic: string, count: number = 8, mode: LearnMode = 'words'): string {
+export function learnUserPrompt(topic: string, count: number = 10, mode: LearnMode = 'words'): string {
   const modeInstructions: Record<LearnMode, string> = {
     words:    `Generate ${count} useful English vocabulary words`,
     phrases:  `Generate ${count} useful English phrases and expressions (not single words)`,
-    idioms:   `Generate ${count} common English idioms with their meanings`,
+    idioms:   `Generate ${count} common English idioms with their literal and figurative meanings`,
     business: `Generate ${count} essential English business vocabulary words and phrases`,
   }
-  return `${modeInstructions[mode]} related to the topic: "${topic}". Focus on practical, commonly used items memorable and useful in real life.`
+  return `${modeInstructions[mode]} related to the topic: "${topic}". Include a mix of difficulty — some accessible, some more challenging — all appropriate for the student's CEFR level. Focus on practical, commonly used items that will be memorable and useful in real life.`
 }
 
 // ─── Conversation ─────────────────────────────────────────────────────────────
@@ -85,19 +76,9 @@ Rules:
 export function grammarSystemPrompt(profile: UserProfile): string {
   return `You are an English grammar expert. ${profileContext(profile)}
 
-Analyze the given English text and respond in JSON:
-{
-  "corrected": "The corrected version of the text",
-  "errors": [
-    {
-      "original": "the wrong part",
-      "correction": "the correct version",
-      "explanation": "中文解释错误原因"
-    }
-  ],
-  "improvements": ["Optional stylistic suggestion in Chinese"],
-  "overall": "Overall assessment in Chinese (1-2 sentences)"
-}`
+Analyze the given English text and provide corrections and improvements.
+
+For "practicePatterns": if the text contains a notable grammar structure (correct or corrected), provide exactly 2 sentence pattern templates the student can practice. Format each as a template string followed by a Chinese explanation of when to use it, e.g. "Subject + have been + verb-ing + for/since [time] → 用于描述从过去持续到现在的动作". If no clear pattern emerges, base the patterns on the most significant error found.`
 }
 
 // ─── Quiz ─────────────────────────────────────────────────────────────────────
@@ -136,36 +117,27 @@ export function quizGeneratePrompt(
 // ─── Reading ──────────────────────────────────────────────────────────────────
 
 export function readingSystemPrompt(profile: UserProfile): string {
+  const isBeginnerLevel = ['A1', 'A2'].includes(profile.level)
+  const passageLength = isBeginnerLevel ? '200-250 words' : '300-400 words'
+
   return `You are an English reading tutor. ${profileContext(profile)}
 
-Generate a reading passage with comprehension questions. Respond in JSON:
-{
-  "title": "Article title",
-  "passage": "The full article text. Write 150-250 words appropriate for the student's level.",
-  "highlights": [
-    {
-      "word": "exact word as it appears in passage",
-      "phonetic": "/fəˈnetɪk/",
-      "meaning": "中文释义",
-      "partOfSpeech": "noun/verb/adj/etc"
-    }
-  ],
-  "questions": [
-    {
-      "question": "A comprehension question about the passage",
-      "options": ["A. option", "B. option", "C. option", "D. option"],
-      "answer": "A",
-      "explanation": "中文解释为什么这个答案是正确的"
-    }
-  ],
-  "summary": "一句话总结文章主旨（中文）"
-}
+Generate a reading passage with comprehension questions. Follow these guidelines:
 
-RULES:
-- "highlights": pick 6-10 words from the passage that are worth learning for this student's level. Each "word" field must match EXACTLY how it appears in the passage (same case).
-- "questions": generate exactly 4 multiple-choice questions.
-- Phonetic values must be quoted strings: "/wɜːrd/" not /wɜːrd/
-- Output raw JSON only, no markdown fences.`
+**passage**: Write ${passageLength} of engaging, informative content on real-world topics appropriate for CEFR level ${profile.level}. Use varied sentence structures. For higher levels (B2+), include complex ideas and nuanced language. Avoid overly simple or patronizing content.
+
+**highlights**: Pick 6-10 words from the passage that are worth learning at this student's level.
+- The "word" field must match EXACTLY how it appears in the passage (same case, same form).
+- "exampleSentence": Write a NEW example sentence that is DIFFERENT from the passage, showing the word in a different context to broaden understanding.
+
+**questions**: Generate exactly 5 multiple-choice questions (not 4) that test genuine comprehension:
+- Q1: Main idea or purpose
+- Q2: Specific detail
+- Q3: Vocabulary in context (what does X mean in the passage?)
+- Q4: Inference (what can be concluded / implied?)
+- Q5: Author's attitude, tone, or text structure
+
+**grammarPoint**: Identify ONE interesting grammar structure used in the passage (e.g., participle clause, inversion, subjunctive, complex conditional, or a specific tense pattern). Explain it in Chinese, then quote the exact sentence from the passage as the example. Format: "[Grammar structure name]: [Chinese explanation]. 例句：'[exact sentence from passage]'"`
 }
 
 export function readingUserPrompt(topic: string): string {
@@ -177,47 +149,38 @@ export function readingUserPrompt(topic: string): string {
 export function listeningDictationPrompt(profile: UserProfile, topic: string): string {
   return `You are an English listening tutor. ${profileContext(profile)}
 
-Generate 6 English sentences for a dictation exercise on the topic: "${topic}".
-Sentences should be appropriate for the student's level — not too long, clear pronunciation.
+Generate 8 English sentences for a dictation exercise on the topic: "${topic}".
 
-Respond in JSON:
-{
-  "topic": "${topic}",
-  "sentences": [
-    "Sentence one here.",
-    "Sentence two here.",
-    "Sentence three here.",
-    "Sentence four here.",
-    "Sentence five here.",
-    "Sentence six here."
-  ]
-}
-
-Output raw JSON only, no markdown fences.`
+Requirements:
+- All sentences must be appropriate for CEFR level ${profile.level}.
+- Each sentence must stand alone grammatically and make sense without context.
+- Do NOT number the sentences in the text field.
+- Arrange with progressive difficulty:
+  - Sentences 1-3: "easy" — short (8-12 words), common vocabulary, simple grammar (subject-verb-object).
+  - Sentences 4-6: "medium" — moderate length (12-18 words), some topic-specific vocabulary, compound sentences.
+  - Sentences 7-8: "hard" — longer (18-25 words), complex structures (relative clauses, conditionals, passive voice), less common vocabulary.
+- The "difficulty" field must be exactly "easy", "medium", or "hard".`
 }
 
 export function listeningComprehensionPrompt(profile: UserProfile, topic: string): string {
   return `You are an English listening tutor. ${profileContext(profile)}
 
-Generate a short English dialogue (6-8 lines) and comprehension questions on the topic: "${topic}".
+Generate a realistic English dialogue and comprehension exercise on the topic: "${topic}".
 
-Respond in JSON:
-{
-  "topic": "${topic}",
-  "dialogue": [
-    { "speaker": "A", "text": "English dialogue line." },
-    { "speaker": "B", "text": "English dialogue line." }
-  ],
-  "questions": [
-    {
-      "question": "Comprehension question about the dialogue",
-      "options": ["A. option", "B. option", "C. option", "D. option"],
-      "answer": "A",
-      "explanation": "中文解释"
-    }
-  ]
-}
+**dialogue**: Write 10-12 lines total, alternating between speaker A and speaker B, starting with A.
+- Use natural spoken English: contractions, discourse markers (well, actually, you know, I mean), realistic fillers, and conversational flow.
+- The speakers must have a clear relationship and purpose for talking. Avoid stilted or textbook-style exchanges.
+- Each line should be 1-3 sentences. Longer, more natural turns are better than single-word responses.
 
-- Generate exactly 3 comprehension questions.
-- Output raw JSON only, no markdown fences.`
+**scene**: One sentence in Chinese describing who the speakers are, where they are, and what situation they are in. Example: "A和B是大学同学，正在图书馆讨论即将到来的期末考试。"
+
+**questions**: Generate exactly 4 comprehension questions (not 3), testing:
+- Q1: Main topic or purpose of the conversation
+- Q2: Specific detail (fact mentioned in the dialogue)
+- Q3: Speaker's attitude, feeling, or opinion
+- Q4: Inference — something implied but not directly stated
+
+**keyPhrases**: Extract exactly 3 useful phrases or expressions directly from the dialogue. For each:
+- "phrase": the exact phrase as it appears in the dialogue
+- "explanation": Chinese explanation of its meaning and natural usage context`
 }
