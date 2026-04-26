@@ -9,7 +9,7 @@ export function createModel(config: AIConfig) {
 
   switch (config.provider) {
     case AIProvider.OpenAI:
-      return createOpenAI({ apiKey: config.apiKey })(model)
+      return createOpenAI({ apiKey: config.apiKey, compatibility: 'compatible' })(model)
 
     case AIProvider.Anthropic:
       return createAnthropic({ apiKey: config.apiKey })(model)
