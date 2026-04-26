@@ -1,0 +1,13 @@
+version: '3.8'
+
+services:
+  ai-english:
+    image: ai-english:latest
+    container_name: ai-english
+    ports:
+      - "8080:8080"
+    environment:
+      - NODE_ENV=production
+      - NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL}
+      - NEXT_PUBLIC_SUPABASE_ANON_KEY=${NEXT_PUBLIC_SUPABASE_ANON_KEY}
+    restart: unless-stopped
